@@ -32,7 +32,7 @@ public static class PortableHostStartup
         Console.WriteLine("Stream Wall");
         Console.WriteLine();
         Console.WriteLine("  1. Configure or edit on this PC");
-        Console.WriteLine("  2. Share on the home network (view only)");
+        Console.WriteLine("  2. Share on the home network (view + edit)");
         Console.WriteLine("  3. Share on the internet (view only, no port forwarding)");
         Console.WriteLine("  Q. Quit");
         Console.WriteLine();
@@ -73,7 +73,7 @@ public static class PortableHostStartup
             return;
         }
 
-        Console.WriteLine("Household view-only links (use one of these on another device):");
+        Console.WriteLine("Home-network links (open one on another device to view or edit):");
         IReadOnlyList<IPAddress> addresses = GetLanAddresses();
         if (addresses.Count == 0)
             Console.WriteLine("  No home-network IPv4 address was detected.");
@@ -83,7 +83,8 @@ public static class PortableHostStartup
                 Console.WriteLine($"  http://{address}:{Port}/view/default");
         }
 
-        Console.WriteLine("Editing is disabled for viewers. Press Ctrl+C to stop sharing.");
+        Console.WriteLine("Anyone on your home network can edit this wall. A configured editor PIN still applies.");
+        Console.WriteLine("Press Ctrl+C to stop sharing.");
         OpenBrowser($"http://127.0.0.1:{Port}/view/default");
     }
 
@@ -100,7 +101,7 @@ public static class PortableHostStartup
 
         Environment.SetEnvironmentVariable("ASPNETCORE_URLS", url, EnvironmentVariableTarget.Process);
         Environment.SetEnvironmentVariable("StreamWall__ReadOnly",
-            mode == PortableLaunchMode.LocalSetup ? "false" : "true", EnvironmentVariableTarget.Process);
+            mode == PortableLaunchMode.PublicShare ? "true" : "false", EnvironmentVariableTarget.Process);
         Environment.SetEnvironmentVariable("StreamWall__AccessToken", string.Empty, EnvironmentVariableTarget.Process);
     }
 
