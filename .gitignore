@@ -1,0 +1,8 @@
+**/bin/
+**/obj/
+**/App_Data/
+artifacts/
+.vs/
+*.user
+*.suo
+

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d1114">
+  <title>Stream Wall</title>
+  <link rel="stylesheet" href="/css/site.css?v=8">
+</head>
+<body>
+  <div id="app" class="app-shell" data-mode="wall">
+    <header class="topbar">
+      <a class="brand" href="/view/default" aria-label="" data-label-key="app.name">
+        <span class="brand-mark" data-icon="wall" aria-hidden="true"></span>
+        <span class="brand-copy">
+          <strong data-i18n="app.name"></strong>
+          <small data-i18n="app.tagline"></small>
+        </span>
+      </a>
+      <div class="top-actions" aria-label="">
+        <div class="mode-switch" role="group" data-i18n-aria-label="labels.viewMode">
+          <button class="icon-button is-active" type="button" data-mode="wall"
+                  data-label-key="modes.wall" aria-pressed="true">
+            <span data-icon="wall" aria-hidden="true"></span>
+          </button>
+          <button class="icon-button" type="button" data-mode="edit"
+                  data-label-key="modes.edit" data-tooltip-key="tooltips.edit"
+                  aria-pressed="false">
+            <span data-icon="edit" aria-hidden="true"></span>
+          </button>
+        </div>
+        <button id="web-settings" class="icon-button" type="button"
+                data-label-key="actions.webSettings" data-tooltip-key="tooltips.webSettings">
+          <span data-icon="settings" aria-hidden="true"></span>
+        </button>
+        <button id="lock-editor" class="icon-button" type="button" hidden
+                data-label-key="actions.lockEditor" data-tooltip-key="tooltips.lockEditor">
+          <span data-icon="lock" aria-hidden="true"></span>
+        </button>
+        <button id="logout-access" class="icon-button" type="button" hidden
+                data-label-key="actions.logout" data-tooltip-key="tooltips.logout">
+          <span data-icon="lock" aria-hidden="true"></span>
+        </button>
+        <button id="add-video" class="icon-button primary" type="button"
+                data-label-key="actions.addVideo">
+          <span data-icon="plus" aria-hidden="true"></span>
+        </button>
+      </div>
+    </header>
+
+    <main id="wall-body" class="wall-body">
+      <section class="workspace" aria-label="">
+        <header class="workspace-head">
+          <div>
+            <h1 id="wall-name"></h1>
+            <p id="wall-meta"></p>
+          </div>
+          <div class="workspace-actions">
+            <button id="refresh-wall" class="icon-button" type="button"
+                    data-label-key="actions.refresh" data-tooltip-key="tooltips.refresh">
+              <span data-icon="refresh" aria-hidden="true"></span>
+            </button>
+          </div>
+        </header>
+
+        <div id="layout-strip" class="layout-strip" hidden>
+          <span class="layout-label" data-i18n="labels.layout"></span>
+          <div id="layout-presets" class="layout-presets" role="group"
+               data-i18n-aria-label="labels.layout"></div>
+          <div id="saved-layouts" class="saved-layouts" aria-label=""></div>
+          <div class="preset-tools">
+            <label class="preset-conflict"><span data-i18n="labels.importMode"></span><select id="preset-conflict-mode" data-label-key="labels.importMode"><option value="rename" data-i18n="options.renameOnConflict"></option><option value="replace" data-i18n="options.replaceOnConflict"></option></select></label>
+            <button id="import-layouts" class="icon-button" type="button"
+                    data-label-key="actions.importLayouts" data-tooltip-key="tooltips.importLayouts">
+              <span data-icon="upload" aria-hidden="true"></span>
+            </button>
+            <button id="export-layouts" class="icon-button" type="button"
+                    data-label-key="actions.exportLayouts" data-tooltip-key="tooltips.exportLayouts">
+              <span data-icon="download" aria-hidden="true"></span>
+            </button>
+            <input id="import-layouts-file" type="file" accept="application/json,.json" hidden>
+          </div>
+          <button id="save-layout" class="icon-button" type="button"
+                  data-label-key="actions.saveLayout" data-tooltip-key="tooltips.saveLayout">
+            <span data-icon="save" aria-hidden="true"></span>
+          </button>
+        </div>
+
+        <section id="wall-canvas" class="wall-canvas" aria-label=""></section>
+      </section>
+
+      <aside id="inspector" class="inspector" aria-label="" hidden></aside>
+    </main>
+
+    <section id="access-gate" class="access-gate" hidden aria-labelledby="access-gate-title">
+      <form id="access-login-form" class="access-gate-form">
+        <h1 id="access-gate-title" data-i18n="auth.title"></h1>
+        <p data-i18n="auth.description"></p>
+        <label for="access-token" data-i18n="auth.token"></label>
+        <input id="access-token" name="token" type="password" autocomplete="current-password"
+               data-placeholder-key="auth.tokenPlaceholder">
+        <button class="text-button primary" type="submit" data-i18n="auth.signIn"></button>
+        <p id="access-login-error" class="access-login-error" role="alert" hidden></p>
+      </form>
+    </section>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  </div>
+  <script src="/vendor/mediamtx-reader.js?v=1.18.1"></script>
+  <script src="/vendor/hls.min.js?v=1.7.3"></script>
+    <script type="module" src="/js/app.js?v=14"></script>
+</body>
+</html>

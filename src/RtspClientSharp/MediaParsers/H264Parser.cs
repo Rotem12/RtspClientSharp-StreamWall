@@ -1,0 +1,407 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using RtspClientSharp.RawFrames;
+using RtspClientSharp.RawFrames.Video;
+using RtspClientSharp.Utils;
+
+namespace RtspClientSharp.MediaParsers
+{
+    class H264Parser
+    {
+        private enum FrameType
+        {
+            Unknown,
+            IntraFrame,
+            PredictionFrame
+        }
+
+        public static readonly ArraySegment<byte> StartMarkerSegment = new ArraySegment<byte>(RawH264Frame.StartMarker);
+
+        private readonly Func<DateTime> _frameTimestampProvider;
+        private readonly BitStreamReader _bitStreamReader = new BitStreamReader();
+        private readonly Dictionary<int, byte[]> _spsMap = new Dictionary<int, byte[]>();
+        private readonly Dictionary<int, byte[]> _ppsMap = new Dictionary<int, byte[]>();
+        private bool _waitForIFrame = true;
+        private byte[] _spsPpsBytes = new byte[0];
+        private bool _updateSpsPpsBytes;
+        private int _sliceType = -1;
+        private int _fragmentedNalStartPosition = -1;
+
+        private readonly MemoryStream _frameStream;
+
+        public Action<RawFrame> FrameGenerated;
+
+        public H264Parser(Func<DateTime> frameTimestampProvider)
+        {
+            _frameTimestampProvider = frameTimestampProvider ?? throw new ArgumentNullException(nameof(frameTimestampProvider));
+            // The captured stream has complete frames around 40 KB and bursts
+            // up to roughly 90 KB. Starting at 128 KB avoids repeated
+            // MemoryStream growth/copy operations while keeping one modest
+            // reusable buffer per parser.
+            _frameStream = new MemoryStream(128 * 1024);
+        }
+
+        public void Parse(ArraySegment<byte> byteSegment, bool generateFrame)
+        {
+            Debug.Assert(byteSegment.Array != null, "byteSegment.Array != null");
+
+            if (H264Slicer.StartsWithStartMarker(byteSegment))
+                H264Slicer.Slice(byteSegment, SlicerOnNalUnitFound);
+            else
+                ProcessNalUnit(byteSegment, false, ref generateFrame);
+
+            if (generateFrame)
+                TryGenerateFrame();
+        }
+
+        public void TryGenerateFrame()
+        {
+            // A fragmented NAL is appended directly to the frame buffer. Do not
+            // expose the preceding NALs while that fragment is incomplete; the
+            // old implementation kept the fragment in a separate stream and
+            // could generate only the completed prefix.
+            if (_fragmentedNalStartPosition >= 0)
+                return;
+
+            if (_frameStream.Position == 0)
+                return;
+
+            RawVideoFramePadding.Ensure(_frameStream);
+            var frameBytes = new ArraySegment<byte>(_frameStream.GetBuffer(), 0, (int)_frameStream.Position);
+            _frameStream.Position = 0;
+            TryGenerateFrame(frameBytes);
+        }
+
+        private void TryGenerateFrame(ArraySegment<byte> frameBytes)
+        {
+            if (_updateSpsPpsBytes)
+            {
+                UpdateSpsPpsBytes();
+                _updateSpsPpsBytes = false;
+            }
+
+            if (_sliceType == -1)
+                return;
+
+            int sliceType = _sliceType;
+            _sliceType = -1;
+
+            if (_spsPpsBytes.Length == 0)
+                return;
+
+            FrameType frameType = GetFrameType(sliceType);
+            DateTime frameTimestamp;
+
+            if (frameType == FrameType.PredictionFrame && !_waitForIFrame)
+            {
+                frameTimestamp = _frameTimestampProvider();
+                var frame = new RawH264PFrame(frameTimestamp, frameBytes)
+                {
+                    HasDecoderInputPadding = RawVideoFramePadding.IsZeroed(frameBytes)
+                };
+                FrameGenerated?.Invoke(frame);
+                return;
+            }
+
+            if (frameType != FrameType.IntraFrame)
+                return;
+
+            _waitForIFrame = false;
+            var byteSegment = new ArraySegment<byte>(_spsPpsBytes);
+
+            frameTimestamp = _frameTimestampProvider();
+            var intraFrame = new RawH264IFrame(frameTimestamp, frameBytes, byteSegment)
+            {
+                HasDecoderInputPadding = RawVideoFramePadding.IsZeroed(frameBytes)
+            };
+            FrameGenerated?.Invoke(intraFrame);
+        }
+
+        public void ResetState()
+        {
+            AbortFragmentedNal();
+            _frameStream.Position = 0;
+            _frameStream.SetLength(0);
+            _sliceType = -1;
+            _waitForIFrame = true;
+        }
+
+        internal bool HasFragmentedNal => _fragmentedNalStartPosition >= 0;
+
+        internal void BeginFragmentedNal(byte nalHeader, ArraySegment<byte> firstPayload)
+        {
+            AbortFragmentedNal();
+            _fragmentedNalStartPosition = checked((int)_frameStream.Position);
+            _frameStream.Write(StartMarkerSegment.Array, StartMarkerSegment.Offset,
+                StartMarkerSegment.Count);
+            _frameStream.WriteByte(nalHeader);
+            AppendToFrameStream(firstPayload);
+        }
+
+        internal void AppendFragmentedNal(ArraySegment<byte> payload)
+        {
+            if (_fragmentedNalStartPosition < 0)
+                return;
+
+            AppendToFrameStream(payload);
+        }
+
+        internal void CompleteFragmentedNal(bool generateFrame)
+        {
+            int fragmentStartPosition = _fragmentedNalStartPosition;
+            if (fragmentStartPosition < 0)
+                return;
+
+            _fragmentedNalStartPosition = -1;
+            var nalUnitSegment = new ArraySegment<byte>(_frameStream.GetBuffer(), fragmentStartPosition,
+                checked((int)_frameStream.Position - fragmentStartPosition));
+
+            try
+            {
+                bool ignoredGenerateFrame = false;
+                ProcessNalUnit(nalUnitSegment, true, ref ignoredGenerateFrame, false);
+                if (generateFrame)
+                    TryGenerateFrame();
+            }
+            catch
+            {
+                _frameStream.Position = fragmentStartPosition;
+                _frameStream.SetLength(fragmentStartPosition);
+                throw;
+            }
+        }
+
+        internal void AbortFragmentedNal()
+        {
+            if (_fragmentedNalStartPosition < 0)
+                return;
+
+            _frameStream.Position = _fragmentedNalStartPosition;
+            _frameStream.SetLength(_fragmentedNalStartPosition);
+            _fragmentedNalStartPosition = -1;
+        }
+
+        private void SlicerOnNalUnitFound(ArraySegment<byte> byteSegment)
+        {
+            bool generateFrame = false;
+            ProcessNalUnit(byteSegment, true, ref generateFrame);
+        }
+
+        private void ProcessNalUnit(ArraySegment<byte> byteSegment, bool hasStartMarker, ref bool generateFrame,
+            bool appendToFrameStream = true)
+        {
+            Debug.Assert(byteSegment.Array != null, "byteSegment.Array != null");
+
+            if (byteSegment.Array == null)
+                return;
+
+            int offset = byteSegment.Offset;
+
+            int startMarkerLength = hasStartMarker ? GetStartMarkerLength(byteSegment) : 0;
+
+            if (hasStartMarker && startMarkerLength == 0)
+                return;
+
+            offset += startMarkerLength;
+
+            if (offset < byteSegment.Offset || offset >= byteSegment.Offset + byteSegment.Count)
+                return;
+
+            int nalUnitType = byteSegment.Array[offset] & 0x1F;
+
+            if (!(nalUnitType > 0 && nalUnitType < 24))
+                throw new H264ParserException($"Invalid nal unit type: {nalUnitType}");
+
+            if (nalUnitType == 7)
+            {
+                ParseSps(byteSegment, startMarkerLength);
+                return;
+            }
+
+            if (nalUnitType == 8)
+            {
+                ParsePps(byteSegment, startMarkerLength);
+                return;
+            }
+
+            if (_sliceType == -1 && (nalUnitType == 5 || nalUnitType == 1))
+                _sliceType = GetSliceType(byteSegment, startMarkerLength);
+
+            if (nalUnitType == 6)
+                return;
+
+            if (generateFrame && (hasStartMarker || byteSegment.Offset >= StartMarkerSegment.Count) && _frameStream.Position == 0)
+            {
+                if (!hasStartMarker)
+                {
+                    int newOffset = byteSegment.Offset - StartMarkerSegment.Count;
+
+                    Buffer.BlockCopy(StartMarkerSegment.Array, StartMarkerSegment.Offset,
+                        byteSegment.Array, newOffset, StartMarkerSegment.Count);
+
+                    byteSegment = new ArraySegment<byte>(byteSegment.Array, newOffset, byteSegment.Count + StartMarkerSegment.Count);
+                }
+
+                generateFrame = false;
+                TryGenerateFrame(byteSegment);
+            }
+            else if (appendToFrameStream)
+            {
+                if (!hasStartMarker)
+                    _frameStream.Write(StartMarkerSegment.Array, StartMarkerSegment.Offset, StartMarkerSegment.Count);
+
+                AppendToFrameStream(byteSegment);
+            }
+        }
+
+        private void AppendToFrameStream(ArraySegment<byte> byteSegment)
+        {
+            if (byteSegment.Array == null || byteSegment.Count == 0)
+                return;
+
+            _frameStream.Write(byteSegment.Array, byteSegment.Offset, byteSegment.Count);
+        }
+
+        private void ParseSps(ArraySegment<byte> byteSegment, int startMarkerLength)
+        {
+            const int spsMinSize = 5;
+
+            if (byteSegment.Count < startMarkerLength + spsMinSize)
+                return;
+
+            ProcessSpsOrPps(byteSegment, startMarkerLength, spsMinSize - 1, _spsMap);
+        }
+
+        private void ParsePps(ArraySegment<byte> byteSegment, int startMarkerLength)
+        {
+            const int ppsMinSize = 2;
+
+            if (byteSegment.Count < startMarkerLength + ppsMinSize)
+                return;
+
+            ProcessSpsOrPps(byteSegment, startMarkerLength, ppsMinSize - 1, _ppsMap);
+        }
+
+        private void ProcessSpsOrPps(ArraySegment<byte> byteSegment, int startMarkerLength, int offset,
+            Dictionary<int, byte[]> idToBytesMap)
+        {
+            _bitStreamReader.ReInitialize(byteSegment.SubSegment(startMarkerLength + offset));
+
+            int id = _bitStreamReader.ReadUe();
+
+            if (id == -1)
+                return;
+
+            if (startMarkerLength != 0)
+                byteSegment = byteSegment.SubSegment(startMarkerLength);
+
+            if (TryUpdateSpsOrPps(byteSegment, id, idToBytesMap))
+                _updateSpsPpsBytes = true;
+        }
+
+        private static bool TryUpdateSpsOrPps(ArraySegment<byte> byteSegment, int id,
+            Dictionary<int, byte[]> idToBytesMap)
+        {
+            Debug.Assert(byteSegment.Array != null, "byteSegment.Array != null");
+
+            if (!idToBytesMap.TryGetValue(id, out byte[] data))
+            {
+                data = new byte[byteSegment.Count];
+                Buffer.BlockCopy(byteSegment.Array, byteSegment.Offset, data, 0, byteSegment.Count);
+                idToBytesMap.Add(id, data);
+                return true;
+            }
+
+            if (!ArrayUtils.IsBytesEquals(data, 0, data.Length, byteSegment.Array, byteSegment.Offset,
+                byteSegment.Count))
+            {
+                if (data.Length != byteSegment.Count)
+                    data = new byte[byteSegment.Count];
+
+                Buffer.BlockCopy(byteSegment.Array, byteSegment.Offset, data, 0, byteSegment.Count);
+                idToBytesMap[id] = data;
+                return true;
+            }
+
+            return false;
+        }
+
+        private void UpdateSpsPpsBytes()
+        {
+            int totalSize = _spsMap.Values.Sum(sps => sps.Length) + _ppsMap.Values.Sum(pps => pps.Length) +
+                            RawH264Frame.StartMarker.Length * (_spsMap.Count + _ppsMap.Count);
+
+            if (_spsPpsBytes.Length != totalSize)
+                _spsPpsBytes = new byte[totalSize];
+
+            int offset = 0;
+
+            foreach (byte[] sps in _spsMap.Values)
+            {
+                Buffer.BlockCopy(RawH264Frame.StartMarker, 0, _spsPpsBytes, offset, RawH264Frame.StartMarker.Length);
+                offset += RawH264Frame.StartMarker.Length;
+                Buffer.BlockCopy(sps, 0, _spsPpsBytes, offset, sps.Length);
+                offset += sps.Length;
+            }
+
+            foreach (byte[] pps in _ppsMap.Values)
+            {
+                Buffer.BlockCopy(RawH264Frame.StartMarker, 0, _spsPpsBytes, offset, RawH264Frame.StartMarker.Length);
+                offset += RawH264Frame.StartMarker.Length;
+                Buffer.BlockCopy(pps, 0, _spsPpsBytes, offset, pps.Length);
+                offset += pps.Length;
+            }
+        }
+
+        private int GetSliceType(ArraySegment<byte> byteSegment, int startMarkerLength)
+        {
+            int offset = startMarkerLength + 1;
+
+            _bitStreamReader.ReInitialize(byteSegment.SubSegment(offset));
+
+            int firstMbInSlice = _bitStreamReader.ReadUe();
+
+            if (firstMbInSlice == -1)
+                return firstMbInSlice;
+
+            int nalSliceType = _bitStreamReader.ReadUe();
+            return nalSliceType;
+        }
+
+        private static int GetStartMarkerLength(ArraySegment<byte> byteSegment)
+        {
+            if (byteSegment.Array == null || byteSegment.Count < 3)
+                return 0;
+
+            if (byteSegment.Count >= 4 && byteSegment.Array[byteSegment.Offset] == 0 &&
+                byteSegment.Array[byteSegment.Offset + 1] == 0 &&
+                byteSegment.Array[byteSegment.Offset + 2] == 0 &&
+                byteSegment.Array[byteSegment.Offset + 3] == 1)
+                return RawH264Frame.StartMarker.Length;
+
+            if (byteSegment.Array[byteSegment.Offset] == 0 &&
+                byteSegment.Array[byteSegment.Offset + 1] == 0 &&
+                byteSegment.Array[byteSegment.Offset + 2] == 1)
+                return 3;
+
+            return 0;
+        }
+
+        private static FrameType GetFrameType(int sliceType)
+        {
+            // slice_type is specified modulo 5; values 0/5 are P, 1/6 are B,
+            // 3/8 are SP and 4/9 are SI. All of those are dependent frames
+            // and must remain in the stream when the decoder is live.
+            if (sliceType == 0 || sliceType == 1 || sliceType == 3 || sliceType == 4 ||
+                sliceType == 5 || sliceType == 6 || sliceType == 8 || sliceType == 9)
+                return FrameType.PredictionFrame;
+            if (sliceType == 2 || sliceType == 7)
+                return FrameType.IntraFrame;
+
+            return FrameType.Unknown;
+        }
+    }
+}
