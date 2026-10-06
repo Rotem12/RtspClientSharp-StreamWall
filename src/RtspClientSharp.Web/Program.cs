@@ -162,10 +162,10 @@ app.MapFallbackToFile("index.html");
 
 app.Run();
 
-static async Task<IResult> GetWallsAsync(WallStore store, CancellationToken token)
+static async Task<IResult> GetWallsAsync(WallStore store, StreamWallOptions options, CancellationToken token)
 {
     IReadOnlyList<WallConfig> walls = await store.GetAllAsync(token).ConfigureAwait(false);
-    return Results.Ok(walls.Select(WallMapper.ToResponse));
+    return Results.Ok(walls.Select(wall => WallMapper.ToResponse(wall, includeSourceDetails: !options.ReadOnly)));
 }
 
 static IResult GetAccessSession(AccessControlService access, StreamWallOptions options, HttpContext context)
@@ -232,10 +232,13 @@ static IResult LogoutAccess(AccessControlService access, StreamWallOptions optio
     });
 }
 
-static async Task<IResult> GetWallAsync(string wallId, WallStore store, CancellationToken token)
+static async Task<IResult> GetWallAsync(string wallId, WallStore store, StreamWallOptions options,
+    CancellationToken token)
 {
     WallConfig? wall = await store.GetAsync(wallId, token).ConfigureAwait(false);
-    return wall == null ? Results.NotFound() : Results.Ok(WallMapper.ToResponse(wall));
+    return wall == null
+        ? Results.NotFound()
+        : Results.Ok(WallMapper.ToResponse(wall, includeSourceDetails: !options.ReadOnly));
 }
 
 static async Task<IResult> GetEditorSessionAsync(string wallId, WallStore store,
@@ -412,13 +415,26 @@ static async Task<IResult> DeleteTileAsync(string wallId, string tileId, WallSto
 }
 
 static async Task<IResult> GetWallStatusAsync(string wallId, WallStore store, StreamRegistry registry,
-    CancellationToken token)
+    StreamWallOptions options, CancellationToken token)
 {
     WallConfig? wall = await store.GetAsync(wallId, token).ConfigureAwait(false);
     if (wall == null)
         return Results.NotFound();
 
-    return Results.Ok(wall.Tiles.Select(tile => registry.GetStatus(tile.Id, tile)));
+    IEnumerable<TileStatusResponse> statuses = wall.Tiles.Select(tile => registry.GetStatus(tile.Id, tile));
+    return Results.Ok(options.ReadOnly
+        ? statuses.Select(status => new TileStatusResponse
+        {
+            TileId = status.TileId,
+            State = status.State,
+            ViewerCount = status.ViewerCount,
+            FrameCount = status.FrameCount,
+            LastFrameAt = status.LastFrameAt,
+            DetectedCodec = status.DetectedCodec,
+            DetectedTransport = status.DetectedTransport,
+            BrowserOutput = status.BrowserOutput
+        })
+        : statuses);
 }
 
 static async Task<IResult> GetStreamCapabilitiesAsync(
@@ -426,6 +442,7 @@ static async Task<IResult> GetStreamCapabilitiesAsync(
     string wallId,
     string tileId,
     WallStore store,
+    StreamWallOptions options,
     SourceValidator validator,
     MediaGatewayService mediaGateway,
     ILogger<MediaGatewayService> logger)
@@ -447,6 +464,15 @@ static async Task<IResult> GetStreamCapabilitiesAsync(
     SourceValidationResult validation = await validator.ValidateAsync(tile, token).ConfigureAwait(false);
     if (!validation.IsValid)
     {
+        if (options.ReadOnly)
+        {
+            return Results.BadRequest(new
+            {
+                code = ApiErrorCodes.SourceValidation,
+                error = "This stream is unavailable."
+            });
+        }
+
         return Results.BadRequest(new
         {
             code = ApiErrorCodes.SourceValidation,
@@ -671,7 +697,7 @@ static async Task<IResult> TestTileAsync(string wallId, string tileId, SourceTes
 }
 
 static async Task HandleMjpegAsync(HttpContext context, string wallId, string tileId,
-    WallStore store, StreamRegistry registry, SourceValidator validator)
+    WallStore store, StreamRegistry registry, SourceValidator validator, StreamWallOptions options)
 {
     CancellationToken token = context.RequestAborted;
     VideoTileConfig? tile = await FindTileAsync(wallId, tileId, store, token).ConfigureAwait(false);
@@ -684,7 +710,7 @@ static async Task HandleMjpegAsync(HttpContext context, string wallId, string ti
     if (!tile.HasSource)
     {
         await WriteSourceErrorAsync(context, ApiErrorCodes.SourceNotConfigured,
-            "The selected tile is not configured.", token)
+            "The selected tile is not configured.", token, readOnly: options.ReadOnly)
             .ConfigureAwait(false);
         return;
     }
@@ -693,7 +719,7 @@ static async Task HandleMjpegAsync(HttpContext context, string wallId, string ti
     if (!validation.IsValid)
     {
         await WriteSourceErrorAsync(context, ApiErrorCodes.SourceValidation,
-            string.Join(" ", validation.Errors), token, validation.Issues)
+            string.Join(" ", validation.Errors), token, validation.Issues, options.ReadOnly)
             .ConfigureAwait(false);
         return;
     }
@@ -743,7 +769,7 @@ static async Task HandleMjpegAsync(HttpContext context, string wallId, string ti
 }
 
 static async Task HandleWebSocketAsync(HttpContext context, string wallId, string tileId,
-    WallStore store, StreamRegistry registry, SourceValidator validator)
+    WallStore store, StreamRegistry registry, SourceValidator validator, StreamWallOptions options)
 {
     if (!context.WebSockets.IsWebSocketRequest)
     {
@@ -763,7 +789,7 @@ static async Task HandleWebSocketAsync(HttpContext context, string wallId, strin
     if (!tile.HasSource)
     {
         await WriteSourceErrorAsync(context, ApiErrorCodes.SourceNotConfigured,
-            "The selected tile is not configured.", token)
+            "The selected tile is not configured.", token, readOnly: options.ReadOnly)
             .ConfigureAwait(false);
         return;
     }
@@ -772,7 +798,7 @@ static async Task HandleWebSocketAsync(HttpContext context, string wallId, strin
     if (!validation.IsValid)
     {
         await WriteSourceErrorAsync(context, ApiErrorCodes.SourceValidation,
-            string.Join(" ", validation.Errors), token, validation.Issues)
+            string.Join(" ", validation.Errors), token, validation.Issues, options.ReadOnly)
             .ConfigureAwait(false);
         return;
     }
@@ -860,15 +886,15 @@ static Task WriteAsciiAsync(Stream stream, string value, CancellationToken token
 }
 
 static async Task WriteSourceErrorAsync(HttpContext context, string code, string message,
-    CancellationToken token, IReadOnlyList<SourceValidationIssue>? issues = null)
+    CancellationToken token, IReadOnlyList<SourceValidationIssue>? issues = null, bool readOnly = false)
 {
     context.Response.StatusCode = StatusCodes.Status400BadRequest;
     await context.Response.WriteAsJsonAsync(new
     {
         code,
         error = "Source validation failed.",
-        errors = new[] { message },
-        issues = issues ?? Array.Empty<SourceValidationIssue>()
+        errors = readOnly ? Array.Empty<string>() : new[] { message },
+        issues = readOnly ? Array.Empty<SourceValidationIssue>() : issues ?? Array.Empty<SourceValidationIssue>()
     }, cancellationToken: token).ConfigureAwait(false);
 }
 

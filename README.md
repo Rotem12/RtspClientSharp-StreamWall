@@ -10,7 +10,7 @@ A browser-based RTSP video wall and manager, packaged to run on Windows without 
 4. Close the local server, then run `Run-Public.bat`.
 5. Send people the one direct `/view/default` link printed by the window. It is copied to the clipboard too.
 
-`Run-Public.bat` starts the app in view-only mode and creates a temporary public HTTPS link. Viewers do not need an account, token, PIN, or password, and cannot change your wall. The helper downloads Cloudflare's official `cloudflared` executable into your user profile and checks its SHA-256 digest; it does not install a Windows service or require admin access. Keep the window open and the PC online while people are testing. Press Ctrl+C to stop it.
+`Run-Public.bat` starts the app in view-only mode and creates a temporary public HTTPS link. Viewers do not need an account, token, PIN, or password, cannot change your wall, and are not sent the saved camera address, path, or username. The helper downloads Cloudflare's official `cloudflared` executable into your user profile and checks its SHA-256 digest; it does not install a Windows service or require admin access. Keep the window open and the PC online while people are testing. Press Ctrl+C to stop it.
 
 The public URL changes when the tunnel is restarted. Quick Tunnels are intended for testing, have no uptime guarantee, and impose service limits; see [Cloudflare's Quick Tunnel notes](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/). Anyone who gets the link can view the video, so only publish feeds you are allowed to share. Streaming also uses the host PC's internet upload bandwidth.
 

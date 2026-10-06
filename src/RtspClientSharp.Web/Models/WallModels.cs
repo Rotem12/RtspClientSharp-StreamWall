@@ -457,7 +457,7 @@ public sealed class SourceTestResponse
 
 public static class WallMapper
 {
-    public static WallResponse ToResponse(WallConfig wall)
+    public static WallResponse ToResponse(WallConfig wall, bool includeSourceDetails = true)
     {
         return new WallResponse
         {
@@ -480,12 +480,12 @@ public static class WallMapper
                 Title = tile.Title,
                 ShowTitle = tile.ShowTitle,
                 Protocol = tile.Protocol,
-                Host = tile.Host,
-                Port = tile.Port,
-                Path = tile.Path,
-                Username = tile.Username,
-                HasPassword = !string.IsNullOrEmpty(tile.Password),
-                CredentialReference = tile.CredentialReference,
+                Host = includeSourceDetails ? tile.Host : string.Empty,
+                Port = includeSourceDetails ? tile.Port : 0,
+                Path = includeSourceDetails ? tile.Path : string.Empty,
+                Username = includeSourceDetails ? tile.Username : string.Empty,
+                HasPassword = includeSourceDetails && !string.IsNullOrEmpty(tile.Password),
+                CredentialReference = includeSourceDetails ? tile.CredentialReference : string.Empty,
                 Transport = tile.Transport,
                 Codec = tile.Codec,
                 Column = tile.Column,
