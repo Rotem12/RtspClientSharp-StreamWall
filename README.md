@@ -2,21 +2,24 @@
 
 A browser-based RTSP video wall and manager, packaged to run on Windows without an installer or administrator rights.
 
-## Easiest setup on the host PC
+## Start it without scripts
 
 1. Download `StreamWall-win-x64.zip` from [Releases](https://github.com/Rotem12/RtspClientSharp-StreamWall/releases).
 2. Extract it somewhere your Windows account can write to, such as Documents. Do not run it from inside the ZIP or `Program Files`.
-3. Run `Run-Local.bat`. Add the RTSP sources in the editor; the host PC must be able to reach those cameras.
-4. Close the local server, then run `Run-Public.bat`.
-5. Send people the one direct `/view/default` link printed by the window. It is copied to the clipboard too.
+3. Double-click `RtspClientSharp.Web.exe` and choose a mode:
+   - **1 — Configure/edit on this PC:** add the RTSP feeds, then press Ctrl+C when finished.
+   - **2 — Share on the home network:** the app prints the direct address for other devices on your Wi-Fi. Viewers cannot edit.
+   - **3 — Share publicly:** the app creates and prints one direct view link. Send that link; viewers need no password or token.
 
-`Run-Public.bat` starts the app in view-only mode and creates a temporary public HTTPS link. Viewers do not need an account, token, PIN, or password, cannot change your wall, and are not sent the saved camera address, path, or username. The helper downloads Cloudflare's official `cloudflared` executable into your user profile and checks its SHA-256 digest; it does not install a Windows service or require admin access. Keep the window open and the PC online while people are testing. Press Ctrl+C to stop it.
+The executable itself downloads Cloudflare's official `cloudflared` helper into your user profile for public mode and checks its SHA-256 digest. No PowerShell, BAT file, installer, .NET install, or admin rights are needed. Keep the app window open while people are viewing. Press Ctrl+C to stop the server and any public link.
+
+Both share modes are view-only: viewers cannot change your wall and are not sent the saved camera address, path, or username. For home-network sharing, Windows Firewall or workplace policy may still block other devices. If group policy also blocks the app's `.exe`, ask the administrator to allow it; this package does not bypass that policy.
 
 The public URL changes when the tunnel is restarted. Quick Tunnels are intended for testing, have no uptime guarantee, and impose service limits; see [Cloudflare's Quick Tunnel notes](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/). Anyone who gets the link can view the video, so only publish feeds you are allowed to share. Streaming also uses the host PC's internet upload bandwidth.
 
 ## Run only on this PC
 
-Run `Run-Local.bat`. This binds to `127.0.0.1:5085`; it is not reachable from the public internet. The app data, including your wall and protected source credentials, is stored in `App_Data`. Keep that folder private and back it up yourself.
+The **Configure/edit on this PC** choice binds to `127.0.0.1:5085`; it is not reachable from other devices. The app data, including your wall and protected source credentials, is stored in `App_Data`. Keep that folder private and back it up yourself. The BAT launchers remain available for machines that permit scripts.
 
 ## Build the portable package from source
 

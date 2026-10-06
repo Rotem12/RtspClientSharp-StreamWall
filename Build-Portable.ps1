@@ -36,5 +36,5 @@ Compress-Archive -Path (Join-Path $publishDirectory '*') -DestinationPath $archi
 Write-Host ''
 Write-Host "Portable folder: $publishDirectory"
 Write-Host "Ready-to-copy package: $archive" -ForegroundColor Green
-Write-Host 'Extract it to a writable folder on the host PC and run Run-Public.bat.'
+Write-Host 'Extract it to a writable folder on the host PC and double-click RtspClientSharp.Web.exe.'
 

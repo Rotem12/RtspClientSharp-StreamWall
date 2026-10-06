@@ -43,6 +43,7 @@ try {
     $env:ASPNETCORE_URLS = "http://127.0.0.1:$port"
     $env:StreamWall__ReadOnly = 'false'
     $server = Start-Process -FilePath $serverExecutable -WorkingDirectory $appDirectory `
+        -ArgumentList @('--stream-wall-managed') `
         -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog `
         -WindowStyle Hidden -PassThru
 

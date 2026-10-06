@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -7,7 +8,13 @@ using Microsoft.AspNetCore.HttpOverrides;
 using RtspClientSharp.Web.Models;
 using RtspClientSharp.Web.Services;
 
-var builder = WebApplication.CreateBuilder(args);
+PortableLaunchMode launchMode = PortableHostStartup.SelectMode(args);
+if (launchMode == PortableLaunchMode.Exit)
+    return;
+
+string[] builderArgs = args.Where(argument =>
+    !string.Equals(argument, PortableHostStartup.ManagedArgument, StringComparison.OrdinalIgnoreCase)).ToArray();
+var builder = WebApplication.CreateBuilder(builderArgs);
 var streamWallOptions = new StreamWallOptions();
 builder.Configuration.GetSection("StreamWall").Bind(streamWallOptions);
 streamWallOptions.Normalize();
@@ -160,7 +167,45 @@ app.MapGet("/api/streams/{wallId}/{tileId}/ws", HandleWebSocketAsync);
 
 app.MapFallbackToFile("index.html");
 
-app.Run();
+if (launchMode == PortableLaunchMode.ManagedServer)
+{
+    app.Run();
+}
+else
+{
+    await app.StartAsync();
+    try
+    {
+        if (launchMode == PortableLaunchMode.PublicShare)
+        {
+            await using CloudflareQuickTunnel tunnel = await CloudflareQuickTunnel.StartAsync();
+            string viewUrl = $"{tunnel.Origin}/view/default";
+            Console.WriteLine();
+            Console.WriteLine($"DIRECT PUBLIC VIEW LINK (send this one): {viewUrl}");
+            Console.WriteLine("No viewer account, token, PIN, or password is required. Editing is disabled.");
+            Console.WriteLine("Keep this window open. Press Ctrl+C to stop the server and public link.");
+            try
+            {
+                Process.Start(new ProcessStartInfo(viewUrl) { UseShellExecute = true });
+            }
+            catch (Exception exception)
+            {
+                Console.WriteLine($"Open the link above in a browser. ({exception.Message})");
+            }
+
+            await app.WaitForShutdownAsync();
+        }
+        else
+        {
+            PortableHostStartup.PrintLocalAddress(launchMode);
+            await app.WaitForShutdownAsync();
+        }
+    }
+    finally
+    {
+        await app.StopAsync();
+    }
+}
 
 static async Task<IResult> GetWallsAsync(WallStore store, StreamWallOptions options, CancellationToken token)
 {

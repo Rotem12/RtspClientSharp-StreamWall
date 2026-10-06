@@ -95,6 +95,7 @@ try {
     $env:StreamWall__ReadOnly = 'true'
     $env:StreamWall__AccessToken = ''
     $server = Start-Process -FilePath $serverExecutable -WorkingDirectory $appDirectory `
+        -ArgumentList @('--stream-wall-managed') `
         -RedirectStandardOutput $serverOut -RedirectStandardError $serverErr `
         -WindowStyle Hidden -PassThru
 
@@ -113,7 +114,7 @@ try {
 
     $wall = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/walls/default" -TimeoutSec 5
     if (@($wall.tiles).Count -eq 0) {
-        Write-Warning 'The default wall has no video sources yet. Stop this window, run Run-Local.bat, add your RTSP feeds, then run Run-Public.bat again.'
+        Write-Warning 'The default wall has no video sources yet. Stop this window, double-click RtspClientSharp.Web.exe, choose 1 to add your RTSP feeds, then choose 3 to share publicly.'
     }
 
     $tunnel = Start-Process -FilePath $cloudflared `
